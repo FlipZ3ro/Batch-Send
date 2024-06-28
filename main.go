@@ -22,13 +22,13 @@ import (
 
 const (
 	rpcURL        = "https://rpc-testnet.unit0.dev"
-	minEthToSend  = 0.000001
-	maxEthToSend  = 0.000005
-	minGasPrice   = 900000000
-	maxGasPrice   = 1500000000
+	minEthToSend  = 0.000000001
+	maxEthToSend  = 0.000000001
+	minGasPrice   = 90000
+	maxGasPrice   = 90000
 	gasLimit      = 21000
-	retryDelay    = 5 * time.Second
-	maxRetries    = 5
+	retryDelay    = 2 * time.Second
+	maxRetries    = 2
 	chainID int64 = 88817
 	weiPerEth     = 1e18
 	gweiPerWei    = 1e9
