@@ -21,7 +21,7 @@ import (
 )
 
 const (
-	rpcURL        = "https://rpc-testnet.unit0.dev"
+	rpcURL        = "YourRpc"
 	minEthToSend  = 0.000000001
 	maxEthToSend  = 0.000000001
 	minGasPrice   = 90000
@@ -29,7 +29,7 @@ const (
 	gasLimit      = 21000
 	retryDelay    = 2 * time.Second
 	maxRetries    = 2
-	chainID int64 = 88817
+	chainID int64 = 1234
 	weiPerEth     = 1e18
 	gweiPerWei    = 1e9
 )
