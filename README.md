@@ -25,8 +25,8 @@ go version
 
 1. **Clone the repository:**
    ```sh
-   git clone https://github.com/0xlimon/units-farm.git
-   cd units-farm
+   git clone https://github.com/FlipZ3ro/Batch-Send.git
+   cd Batch-Send
    ```
 
 2. **Set up Go modules:**
@@ -39,9 +39,6 @@ go version
    ```json
    [
        "YOUR_PRIVATE_KEY_1",
-       "YOUR_PRIVATE_KEY_2",
-       "YOUR_PRIVATE_KEY_3",
-       "YOUR_PRIVATE_KEY_4"
    ]
    ```
 
