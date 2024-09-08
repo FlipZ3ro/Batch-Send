@@ -21,115 +21,113 @@ import (
 )
 
 const (
-	minEthToSend  = 0.000001
-	maxEthToSend  = 0.000001
-	minGasPrice   = 3000000000 // 3 gwei
-	maxGasPrice   = 3000000000 // 3 gwei
-	gasLimit      = 21000
-	retryDelay    = 2 * time.Second
-	maxRetries    = 2
-	chainID int64 = 64165
-	weiPerEth     = 1e18
-	gweiPerWei    = 1e9
+	rpcURL         = "https://rpc.testnet.soniclabs.com/"
+	explorerURL    = "https://testnet.soniclabs.com/tx/"
+	minEthToSend   = 0.000001
+	maxEthToSend   = 0.000001
+	minGasPrice    = 10000000000 // 10 gwei
+	maxGasPrice    = 20000000000 // 20 gwei
+	gasLimit       = 21000
+	retryDelay     = 1 * time.Second
+	maxRetries     = 2
+	chainID int64  = 64165
+	weiPerEth      = 1e18
+	gweiPerWei     = 1e9
 )
 
 func main() {
-	printHeader()
+    printHeader()
 
-	// Meminta pengguna untuk memasukkan RPC URL
-	var rpcURL string
-	fmt.Print("Enter the RPC URL: ")
-	fmt.Scanln(&rpcURL)
+    privateKeys := loadPrivateKeys("privateKeys.json")
 
-	// Load private keys dari file
-	privateKeys := loadPrivateKeys("privateKeys.json")
+    client, err := ethclient.Dial(rpcURL)
+    if err != nil {
+        log.Fatalf("Failed to connect to the Ethereum client: %v", err)
+    }
 
-	// Coba koneksi ke client Ethereum menggunakan RPC URL yang diberikan
-	client, err := ethclient.Dial(rpcURL)
-	if err != nil {
-		log.Fatalf("Failed to connect to the Ethereum client: %v", err)
-	}
+    fmt.Print("Enter the number of transactions per wallet: ")
+    var numTransactions int
+    fmt.Scanf("%d", &numTransactions)
 
-	fmt.Print("Enter the number of transactions per wallet: ")
-	var numTransactions int
-	fmt.Scanf("%d", &numTransactions)
+    fmt.Print("Enter time between transactions (in seconds): ")
+    var waitTimeSeconds int
+    fmt.Scanf("%d", &waitTimeSeconds)
+    if waitTimeSeconds <= 0 {
+        waitTimeSeconds = 1 // Set minimum 1 second
+    }
+    waitTime := time.Duration(waitTimeSeconds) * time.Second
 
-	fmt.Print("Enter the time between transactions (in seconds): ")
-	var waitTimeSeconds int
-	fmt.Scanf("%d", &waitTimeSeconds)
-	waitTime := time.Duration(waitTimeSeconds) * time.Second
+    wallets := make([]*bind.TransactOpts, len(privateKeys))
+    transactionCounts := make([]int, len(privateKeys))
+    for i, key := range privateKeys {
+        wallets[i] = createWallet(client, key)
+        address := wallets[i].From.Hex()
+        fmt.Printf("Wallet %s will perform %d transactions\n", shortenAddress(address), numTransactions)
+    }
 
-	// Inisialisasi wallets dan transactionCounts
-	wallets := make([]*bind.TransactOpts, len(privateKeys))
-	transactionCounts := make([]int, len(privateKeys))
-	for i, key := range privateKeys {
-		wallets[i] = createWallet(client, key)
-		address := wallets[i].From.Hex()
-		fmt.Printf("Wallet %s will perform %d transactions\n", shortenAddress(address), numTransactions)
-	}
+    totalTransactions := numTransactions * len(wallets)
+    for i := 0; i < totalTransactions; i++ {
+        walletIndex := i % len(wallets)
+        wallet := wallets[walletIndex]
+        senderAddress := wallet.From
 
-	totalTransactions := numTransactions * len(wallets)
-	for i := 0; i < totalTransactions; i++ {
-		walletIndex := i % len(wallets)
-		wallet := wallets[walletIndex]
-		senderAddress := wallet.From
+        senderBalance := checkBalanceWithRetry(client, senderAddress, maxRetries)
+        if senderBalance.Cmp(ethToWei(0.001)) < 0 {
+            fmt.Printf("Wallet %s has insufficient balance, skipping to next transaction\n", shortenAddress(senderAddress.Hex()))
+            continue
+        }
 
-		// Periksa saldo sebelum mengirim transaksi
-		senderBalance := checkBalanceWithRetry(client, senderAddress, maxRetries)
-		if senderBalance.Cmp(ethToWei(0.001)) < 0 {
-			fmt.Printf("Wallet %s has insufficient balance, skipping to next transaction\n", shortenAddress(senderAddress.Hex()))
-			continue
-		}
+        receiverAddress := common.HexToAddress(generateAddress())
+        amountToSend := randomEth(minEthToSend, maxEthToSend)
+        gasPrice := randomGasPrice(minGasPrice, maxGasPrice)
 
-		// Proses transaksi
-		receiverAddress := common.HexToAddress(generateAddress())
-		amountToSend := randomEth(minEthToSend, maxEthToSend)
-		gasPrice := randomGasPrice(minGasPrice, maxGasPrice)
+        tx := types.NewTransaction(
+            nonceAtWithRetry(client, senderAddress, maxRetries),
+            receiverAddress,
+            amountToSend,
+            gasLimit,
+            gasPrice,
+            nil,
+        )
 
-		tx := types.NewTransaction(
-			nonceAtWithRetry(client, senderAddress, maxRetries),
-			receiverAddress,
-			amountToSend,
-			gasLimit,
-			gasPrice,
-			nil,
-		)
+        signedTx, err := wallet.Signer(wallet.From, tx)
+        if err != nil {
+            fmt.Println("Transaction signing failed, skipping to next transaction")
+            continue
+        }
 
-		// Tanda tangani transaksi
-		signedTx, err := wallet.Signer(wallet.From, tx)
-		if err != nil {
-			fmt.Println("Transaction signing failed, skipping to next transaction")
-			continue
-		}
+        err = retry(maxRetries, retryDelay, func() error {
+            return client.SendTransaction(context.Background(), signedTx)
+        })
+        if err != nil {
+            fmt.Println("Failed to send transaction, skipping to next transaction")
+            continue
+        }
 
-		// Coba kirim transaksi dengan retry
-		err = retry(maxRetries, retryDelay, func() error {
-			return client.SendTransaction(context.Background(), signedTx)
-		})
-		if err != nil {
-			fmt.Println("Failed to send transaction, skipping to next transaction")
-			continue
-		}
+        transactionCounts[walletIndex]++
 
-		transactionCounts[walletIndex]++
+		// Format timestamp with RGB color
+	    timestamp := time.Now().Format("2006/01/02 15:04:05")
 
-		// Log transaksi yang sukses
-		fromColor := color.New(color.FgCyan).SprintFunc()
-		toColor := color.New(color.FgMagenta).SprintFunc()
-		amountColor := color.New(color.FgYellow).SprintFunc()
-		txColor := color.New(color.FgGreen).SprintFunc()
+        // Format log output
+        txURL := fmt.Sprintf("%s%s", explorerURL, signedTx.Hash().Hex())
+        fromColor := color.New(color.FgCyan).SprintFunc()
+        toColor := color.New(color.FgMagenta).SprintFunc()
+        amountColor := color.New(color.FgYellow).SprintFunc()
+        txURLColor := color.New(color.FgGreen).SprintFunc()
 
-		fmt.Printf("From: %s, To: %s, Amount: %s ETH, Tx: %s, Transactions: %d\n",
-			fromColor(shortenAddress(senderAddress.Hex())),
-			toColor(shortenAddress(receiverAddress.Hex())),
-			amountColor(weiToEth(amountToSend)),
-			txColor(signedTx.Hash().Hex()),
-			transactionCounts[walletIndex],
-		)
-
-		// Tunggu waktu yang ditentukan antara transaksi
-		time.Sleep(waitTime)
-	}
+        fmt.Printf("Time  : %s\nNumber: %d\nFrom  : %s\nTo Ann: %s\nAmount: %s ETH,\nTx Ann: %s\n\n",
+            timestamp, // Ensure timestamp is used here
+            transactionCounts[walletIndex],
+            fromColor(shortenAddress(senderAddress.Hex())),
+            toColor(shortenAddress(receiverAddress.Hex())),
+            amountColor(weiToEth(amountToSend)),
+            txURLColor(txURL),
+        )
+        // Print separator line
+		fmt.Println("******************************************************")
+        time.Sleep(waitTime)
+    }
 }
 
 func printHeader() {
@@ -154,39 +152,36 @@ func loadPrivateKeys(filename string) []string {
 }
 
 func createWallet(client *ethclient.Client, privateKeyHex string) *bind.TransactOpts {
-    privateKey, err := crypto.HexToECDSA(privateKeyHex)
-    if err != nil {
-        log.Fatalf("Failed to load private key: %v", err)
-    }
-    publicKey := privateKey.Public()
-    publicKeyECDSA, ok := publicKey.(*ecdsa.PublicKey)
-    if !ok {
-        log.Fatalf("Failed to cast public key to ECDSA")
-    }
-    fromAddress := crypto.PubkeyToAddress(*publicKeyECDSA)
-    nonce := nonceAtWithRetry(client, fromAddress, maxRetries)
+	privateKey, err := crypto.HexToECDSA(privateKeyHex)
+	if err != nil {
+		log.Fatalf("Failed to load private key: %v", err)
+	}
+	publicKey := privateKey.Public()
+	publicKeyECDSA, ok := publicKey.(*ecdsa.PublicKey)
+	if !ok {
+		log.Fatalf("Failed to cast public key to ECDSA")
+	}
+	fromAddress := crypto.PubkeyToAddress(*publicKeyECDSA)
+	nonce := nonceAtWithRetry(client, fromAddress, maxRetries)
 
-    chainID := big.NewInt(chainID)
-    
-    // Suggest gas price directly from the network
-    gasPrice, err := client.SuggestGasPrice(context.Background())
-    if err != nil {
-        log.Fatalf("Failed to suggest gas price: %v", err)
-    }
+	chainID := big.NewInt(chainID)
+	gasPrice, err := client.SuggestGasPrice(context.Background())
+	if err != nil {
+		log.Fatalf("Failed to suggest gas price: %v", err)
+	}
 
-    auth, err := bind.NewKeyedTransactorWithChainID(privateKey, chainID)
-    if err != nil {
-        log.Fatalf("Failed to create transactor: %v", err)
-    }
+	auth, err := bind.NewKeyedTransactorWithChainID(privateKey, chainID)
+	if err != nil {
+		log.Fatalf("Failed to create transactor: %v", err)
+	}
 
-    auth.Nonce = big.NewInt(int64(nonce))
-    auth.Value = big.NewInt(0) // in wei
-    auth.GasLimit = uint64(gasLimit)
-    auth.GasPrice = gasPrice
+	auth.Nonce = big.NewInt(int64(nonce))
+	auth.Value = big.NewInt(0) // in wei
+	auth.GasLimit = uint64(gasLimit)
+	auth.GasPrice = gasPrice
 
-    return auth
-    }
-
+	return auth
+}
 
 func nonceAtWithRetry(client *ethclient.Client, address common.Address, retries int) uint64 {
 	var nonce uint64
@@ -228,7 +223,7 @@ func generateAddress() string {
 
 func ethToWei(amount float64) *big.Int {
 	amountStr := strconv.FormatFloat(amount, 'f', 18, 64)
-	amountWei, _ := new(big.Float).SetString(amountStr)
+	amountWei, _b := new(big.Float).SetString(amountStr)
 	wei := new(big.Float).Mul(amountWei, big.NewFloat(weiPerEth))
 	weiInt, _ := wei.Int(nil)
 	return weiInt
@@ -236,7 +231,12 @@ func ethToWei(amount float64) *big.Int {
 
 func weiToEth(amount *big.Int) string {
 	ethValue := new(big.Float).Quo(new(big.Float).SetInt(amount), big.NewFloat(weiPerEth))
-	return ethValue.Text('f', 6)
+	ethStr := fmt.Sprintf("%.6f", ethValue)
+	return ethStr
+}
+
+func shortenAddress(address string) string {
+	return address[:6] + "..." + address[len(address)-4:]
 }
 
 func randomEth(min, max float64) *big.Int {
@@ -245,28 +245,20 @@ func randomEth(min, max float64) *big.Int {
 }
 
 func randomGasPrice(min, max int64) *big.Int {
+	if min >= max {
+		log.Fatalf("Invalid gas price range: min (%d) must be less than max (%d)", min, max)
+	}
 	return big.NewInt(min + rand.Int63n(max-min+1))
 }
 
-func retry(attempts int, delay time.Duration, f func() error) (err error) {
-	for i := 0; i < attempts; i++ {
-		if err = f(); err != nil {
-			time.Sleep(delay)
-			continue
+func retry(retries int, delay time.Duration, fn func() error) error {
+	for i := 0; i < retries; i++ {
+		err := fn()
+		if err == nil {
+			return nil
 		}
-		return nil
+		fmt.Printf("Retrying due to error: %v\n", err)
+		time.Sleep(delay)
 	}
-	return err
-}
-
-func weiToGwei(wei *big.Int) string {
-	gwei := new(big.Float).Quo(new(big.Float).SetInt(wei), big.NewFloat(gweiPerWei))
-	return gwei.Text('f', 9)
-}
-
-func shortenAddress(address string) string {
-	if len(address) < 10 {
-		return address
-	}
-	return fmt.Sprintf("%s...%s", address[:6], address[len(address)-4:])
+	return fmt.Errorf("failed after %d retries", retries)
 }
