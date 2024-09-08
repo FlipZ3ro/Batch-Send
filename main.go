@@ -223,7 +223,7 @@ func generateAddress() string {
 
 func ethToWei(amount float64) *big.Int {
 	amountStr := strconv.FormatFloat(amount, 'f', 18, 64)
-	amountWei, _b := new(big.Float).SetString(amountStr)
+	amountWei, _ := new(big.Float).SetString(amountStr)
 	wei := new(big.Float).Mul(amountWei, big.NewFloat(weiPerEth))
 	weiInt, _ := wei.Int(nil)
 	return weiInt
